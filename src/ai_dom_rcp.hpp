@@ -8,6 +8,36 @@
 #include "spec_assertions.hpp"
 #include "spec_type_descriptors.hpp"
 
+struct BoolDom {
+    bool packet_end = false;
+    bool top = false;
+    bool is_bot() const { return !packet_end; }
+    bool is_top() const { return top; }
+    void havoc() { top = true; }
+    void to_bot() { top = false; packet_end = false; }
+    void operator|=(const BoolDom& o) {
+        if (top || o.top) {
+            top = true;
+            return;
+        };
+        if (packet_end || o.packet_end) {
+            packet_end = true;
+        }
+    }
+    void operator&=(const BoolDom& o) {
+        if (top) {
+            *this = o;
+            return;
+        };
+        if (!packet_end || !o.packet_end) {
+            packet_end = false;
+        }
+    }
+    bool operator==(const BoolDom& o) const { return packet_end == o.packet_end && top == o.top; }
+    void assume(Condition::Op op, const BoolDom& right) { }
+    bool satisfied(Condition::Op op, const BoolDom& right) const { return true; }
+};
+
 class RCP_domain {
     using NumDom = NumDomSet;
     using OffsetDom = OffsetDomSet;
@@ -18,6 +48,7 @@ class RCP_domain {
     OffsetDom packet;
     NumDom num;
     FdSetDom fd;
+    BoolDom packet_end;
 
     template <typename F>
     void pointwise(const RCP_domain& o, const F& f) {
@@ -34,6 +65,7 @@ class RCP_domain {
         for (size_t i=0; i < maps.size(); i++) {
             if (t[i] && !p(maps[i])) return false;
         }
+        if (t[t.size() + T_PACKET_END]) if (!p(packet_end)) return false;
         if (t[t.size() + T_CTX]) if (!p(ctx)) return false;
         if (t[t.size() + T_STACK]) if (!p(stack)) return false;
         if (t[t.size() + T_DATA]) if (!p(packet)) return false;
@@ -47,6 +79,7 @@ class RCP_domain {
         for (size_t i=0; i < maps.size(); i++) {
             if (t[i] && !p(maps[i], o.maps[i])) return false;
         }
+        if (t[t.size() + T_PACKET_END]) if (!p(packet_end, o.packet_end)) return false;
         if (t[t.size() + T_CTX]) if (!p(ctx, o.ctx)) return false;
         if (t[t.size() + T_STACK]) if (!p(stack, o.stack)) return false;
         if (t[t.size() + T_DATA]) if (!p(packet, o.packet)) return false;
@@ -66,6 +99,7 @@ class RCP_domain {
             if (t[i])
                 f(maps[i], o.maps[i]);
         }
+        if (t[t.size() + T_PACKET_END]) f(packet_end, o.packet_end);
         if (t[t.size() + T_CTX]) f(ctx, o.ctx);
         if (t[t.size() + T_STACK]) f(stack, o.stack);
         if (t[t.size() + T_DATA]) f(packet, o.packet);
@@ -79,6 +113,7 @@ class RCP_domain {
             if (t[i])
                 f(maps[i]);
         }
+        if (t[t.size() + T_PACKET_END]) f(packet_end);
         if (t[t.size() + T_CTX]) f(ctx);
         if (t[t.size() + T_STACK]) f(stack);
         if (t[t.size() + T_DATA]) f(packet);
@@ -95,6 +130,8 @@ public:
     RCP_domain with_num(const NumDom& num) const { auto res = *this; res.num = num; return res; }
     RCP_domain with_fd(int fd) const { auto res = *this; res.fd.assign(fd); return res; }
     RCP_domain with_fd(Top t) const { auto res = *this; res.fd.havoc(); return res; }
+    RCP_domain with_packet_end() const { auto res = *this; res.packet_end = { true}; return res; }
+
     FdSetDom get_fd() { return fd; };
     
     void set_mapfd(int mapfd) {
@@ -126,6 +163,9 @@ public:
     OffsetDom get_stack() const {
         return stack;
     }
+    OffsetDom get_packet() const {
+        return packet;
+    }
     bool maybe_packet() const {
         return !packet.is_bot();
     }
@@ -139,7 +179,11 @@ public:
         return with_num({}).is_bot();
     }
 
-   bool operator==(const RCP_domain& o) const {
+    bool is_packet_end() const {
+        return !packet_end.top && packet_end.packet_end;
+    }
+
+    bool operator==(const RCP_domain& o) const {
         return pointwise_all_pairs(TypeSet::all, o,
             [](const auto& a, const auto& b){ return a == b; }); 
     }
@@ -219,6 +263,7 @@ public:
         }
         if (!a.ctx.is_bot()) os << "CTX->" << a.ctx << "; ";
         if (!a.packet.is_bot()) os << "PKT->" << a.packet << "; ";
+        if (!a.packet_end.is_bot()) os << "END->True; ";
         if (!a.stack.is_bot()) os << "STK->" << a.stack << "; ";
         if (!a.num.is_bot()) os << "NUM->" << a.num << "; ";
         if (!a.fd.is_bot()) os << "FD->" << a.fd << "";

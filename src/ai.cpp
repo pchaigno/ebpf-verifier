@@ -38,6 +38,47 @@ bool operator==(const Assert& a, const Assert& b) { return *a.p == *b.p && a.sat
 constexpr Reg DATA_END_REG = Reg{13};
 constexpr Reg META_REG = Reg{14};
 
+struct MinSizeDom {
+    int64_t size = 0xFFFFFFF;
+
+    void operator|=(const MinSizeDom& o) {
+        size = std::min(size, o.size);
+    }
+    void operator&=(const MinSizeDom& o) {
+        size = std::max(size, o.size);
+    }
+
+    void to_bot() {
+        *this = MinSizeDom{};
+    }
+
+    void havoc() {
+        size = 0;
+    }
+
+    void assume_larger_than(const OffsetDomSet& ub) {
+        if (ub.is_bot()) return;
+        if (ub.is_top()) size = 0xFFFFFFF;
+        int64_t m = *std::min_element(ub.elems.begin(), ub.elems.end());
+        size = std::max(size, m);
+    }
+
+    bool in_bounds(const OffsetDomSet& ub) {
+        if (ub.is_bot()) return true;
+        if (ub.is_top()) return false;
+        int64_t m = *std::max_element(ub.elems.begin(), ub.elems.end());
+        return size >= m;
+    }
+
+    bool operator==(const MinSizeDom& o) const {
+        return size == o.size;
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const MinSizeDom& d) {
+        return os << d.size;
+    }
+};
+
 struct RegsDom {
     using ValDom = RCP_domain;
     std::array<std::optional<ValDom>, 16> regs;
@@ -118,6 +159,7 @@ struct RegsDom {
 struct Machine {
     RegsDom regs;
     MemDom stack_arr;
+    MinSizeDom data_end;
 
     program_info info;
     RCP_domain BOT;
@@ -138,7 +180,7 @@ struct Machine {
     }
 
     friend std::ostream& operator<<(std::ostream& os, const Machine& d) {
-        return os << d.regs << " " << d.stack_arr;
+        return os << d.regs << " " << d.stack_arr << " " << d.data_end;
     }
 
     RCP_domain eval(uint64_t v) {
@@ -156,14 +198,16 @@ struct Machine {
     void operator|=(const Machine& o) {
         regs |= o.regs;
         stack_arr |= o.stack_arr;
+        data_end |= o.data_end;
     }
 
     void operator&=(const Machine& o) {
         regs &= o.regs;
         stack_arr &= o.stack_arr;
+        data_end &= o.data_end;
     }
 
-    bool operator==(Machine o) const { return regs == o.regs && stack_arr == o.stack_arr; }
+    bool operator==(Machine o) const { return regs == o.regs && stack_arr == o.stack_arr && data_end == o.data_end; }
     bool operator!=(Machine o) const { return !(*this == o); }
 
     void operator()(Undefined const& a) { assert(false); }
@@ -185,6 +229,12 @@ struct Machine {
     }
 
     void operator()(Assume const& a) {
+        if (eval(a.cond.right).is_packet_end()) {
+            if (a.cond.op == Condition::Op::LE) {
+                data_end.assume_larger_than(regs.at(a.cond.left).get_packet());
+            }
+            return;
+        }
         RCP_domain::assume(regs.at(a.cond.left), a.cond.op, eval(a.cond.right));
     }
 
@@ -205,6 +255,10 @@ struct Machine {
                 } else {
                     RCP_domain::assume(r, t);
                 }
+            },
+            [this](const InPacket& ip) {
+                auto ub = (regs.at(ip.reg) + eval(ip.offset) + eval(ip.width)).get_packet();
+                data_end.assume_larger_than(ub);
             }
         }, a.p->cst);
     }
@@ -224,6 +278,10 @@ struct Machine {
                 } else {
                     return RCP_domain::satisfied(left, t);
                 }
+            },
+            [this](const InPacket& ip) {
+                auto ub = (regs.at(ip.reg) + eval(ip.offset) + eval(ip.width)).get_packet();
+                return data_end.in_bounds(ub);
             }
         }, a.p->cst);
     }
@@ -308,7 +366,7 @@ struct Machine {
             if (d.data > -1 && as_ctx.contains(d.data))
                 r |= data_start;
             else if (d.end > -1 && as_ctx.contains(d.end))
-                r |= data_start + regs.at(DATA_END_REG);
+                r |= BOT.with_packet_end();
             else if (d.meta > -1 && as_ctx.contains(d.meta))
                 r |= data_start + BOT.with_packet(0);
             else 
@@ -464,10 +522,15 @@ class AssertionExtractor {
             if (!t[i]) continue;
             Types s = TypeSet::single(i);
             if (s == TypeSet::num) continue;
+            if (s == TypeSet::packet) {
+                assumptions.push_back(
+                    Assertion{InPacket{reg, offset, width}}
+                );
+                continue;
+            }
 
             Value end;
             if (i < info.map_defs.size()) end = Imm{info.map_defs.at(i).value_size};
-            else if (s == TypeSet::packet) end = DATA_END_REG;
             else if (s == TypeSet::stack) end = Imm{STACK_SIZE};
             else if (s == TypeSet::ctx) end = Imm{static_cast<uint64_t>(info.descriptor.size)};
             else if (s == TypeSet::num) assert(false);

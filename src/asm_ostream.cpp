@@ -283,6 +283,10 @@ std::ostream& operator<<(std::ostream& os, LinearConstraint const& a) {
     return os;
 }
 
+std::ostream& operator<<(std::ostream& os, InPacket const& a) {
+    return os << "inPacket(" << a.reg << " + " << a.offset << ":" << a.width << ")";
+}
+
 std::ostream& operator<<(std::ostream& os, TypeConstraint const& tc) {
     if (tc.given) {
         os << *tc.given << " -> ";
@@ -293,8 +297,10 @@ std::ostream& operator<<(std::ostream& os, TypeConstraint const& tc) {
 std::ostream& operator<<(std::ostream& os, Assertion const& a) {
     if (std::holds_alternative<TypeConstraint>(a.cst)) {
         return os << std::get<TypeConstraint>(a.cst);
-    } else {
+    } else if (std::holds_alternative<LinearConstraint>(a.cst)) {
         return os << std::get<LinearConstraint>(a.cst);
+    } else {
+        return os << std::get<InPacket>(a.cst);
     }
 }
 

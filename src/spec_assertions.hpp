@@ -6,7 +6,8 @@
 #include "spec_type_descriptors.hpp"
 
 enum {
-    T_UNINIT = -6,
+    T_UNINIT = -7,
+    T_PACKET_END = -6,
     T_CTX = -5,
     T_STACK = -4,
     T_DATA = -3,
@@ -62,8 +63,14 @@ struct TypeConstraint {
     TypeConstraint(RT then, RT given) : then{then}, given{given} { }
 };
 
+struct InPacket {
+    Reg reg;
+    int offset;
+    Value width;
+};
+
 struct Assertion {
-    std::variant<LinearConstraint, TypeConstraint> cst;
+    std::variant<LinearConstraint, TypeConstraint, InPacket> cst;
 };
 
 #define DECLARE_EQ6(T, f1, f2, f3, f4, f5, f6) \
@@ -84,4 +91,5 @@ struct Assertion {
 DECLARE_EQ2(TypeConstraint::RT, reg, types)
 DECLARE_EQ2(TypeConstraint, given, then)
 DECLARE_EQ6(LinearConstraint, op, reg, offset, width, v, when_types)
+DECLARE_EQ3(InPacket, reg, offset, width)
 DECLARE_EQ1(Assertion, cst)
