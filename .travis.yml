@@ -10,6 +10,7 @@ jobs:
         - mkdir build
         - cd build
         - cmake .. -DCMAKE_BUILD_TYPE=Release
+        - nproc
         - make -j
       script:
         - cd ..
