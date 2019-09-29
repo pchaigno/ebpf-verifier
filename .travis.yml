@@ -10,7 +10,7 @@ jobs:
         - mkdir build
         - cd build
         - cmake .. -DCMAKE_BUILD_TYPE=Release
-        - make -j$(nproc)
+        - make -j2
       script:
         - cd ..
         - scripts/runperf.sh ebpf-samples zoneCrab
